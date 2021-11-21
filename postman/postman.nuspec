@@ -11,7 +11,7 @@
     <description>Postman helps you be more efficient while working with APIs. Using Postman, you can construct complex HTTP requests quickly, organize them in collections and share them with your co-workers.</description>
     <projectUrl>https://www.postman.com/</projectUrl>
     <packageSourceUrl>https://github.com/kendaleiv/chocolatey-postman</packageSourceUrl>
-    <iconUrl>https://raw.githubusercontent.com/kendaleiv/chocolatey-postman/master/postman-logo.png</iconUrl>
+    <iconUrl>https://raw.githubusercontent.com/kendaleiv/chocolatey-postman/main/postman-logo.png</iconUrl>
     <tags>postman</tags>
     <copyright>Postdot Technologies, Inc.</copyright>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
