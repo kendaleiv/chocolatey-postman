@@ -14,8 +14,6 @@ function global:au_SearchReplace {
 			"<version>[^<]*</version>" = "<version>$($Latest.Version)</version>"
 		}
 		'tools\chocolateyInstall.ps1' = @{
-			"(^[$]url\s*=\s*)('.*')" = "`$1'$($Latest.Url32)'"
-			"(^\s*checksum\s*=\s*)('.*')" = "`$1'$($Latest.Checksum32)'"
 			"(^[$]url64\s*=\s*)('.*')" = "`$1'$($Latest.Url64)'"
 			"(^\s*checksum64\s*=\s*)('.*')" = "`$1'$($Latest.Checksum64)'"
 		}
@@ -28,10 +26,9 @@ function global:au_GetLatest {
 	
 	$version = [Version] $jsonResponse.notes[0].version
 
-	$url32 = "https://dl.pstmn.io/download/version/$($version.Major).$($version.Minor).$($version.Build)/windows32"
-	$url64 = "https://dl.pstmn.io/download/version/$($version.Major).$($version.Minor).$($version.Build)/windows64"
+	$url64 = "https://dl.pstmn.io/download/version/$($version.Major).$($version.Minor).$($version.Build)/win64"
 
-	return @{ Url32 = $url32; Url64 = $url64; Version = $version }
+	return @{ Url64 = $url64; Version = $version }
 }
 
-Update-Package -NoReadme
+Update-Package -NoReadme -ChecksumFor 64
