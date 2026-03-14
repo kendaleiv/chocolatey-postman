@@ -31,12 +31,22 @@ jobs:
         run: |
           Import-Module au
 
-          $jsonReleaseNotesUri = 'https://dl.pstmn.io/api/version/notes?channel=stable'
-          $jsonResponse = Invoke-RestMethod -Method Get -Uri $jsonReleaseNotesUri
-          $latestVersion = [Version] $jsonResponse.notes[0].version
+          try {
+            $jsonReleaseNotesUri = 'https://dl.pstmn.io/api/version/notes?channel=stable'
+            $jsonResponse = Invoke-RestMethod -Method Get -Uri $jsonReleaseNotesUri
+            $latestVersion = [Version] $jsonResponse.notes[0].version
+          } catch {
+            Write-Error "Failed to fetch version information from Postman API: $_"
+            exit 1
+          }
 
-          $nuspec = [xml](Get-Content postman.nuspec)
-          $currentVersion = [Version] $nuspec.package.metadata.version
+          try {
+            $nuspec = [xml](Get-Content postman.nuspec -ErrorAction Stop)
+            $currentVersion = [Version] $nuspec.package.metadata.version
+          } catch {
+            Write-Error "Failed to read or parse postman.nuspec: $_"
+            exit 1
+          }
 
           if ($latestVersion -gt $currentVersion) {
             Write-Host "New version available: $latestVersion (current: $currentVersion)"
@@ -66,6 +76,10 @@ jobs:
           CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
         run: |
           $nupkg = Get-ChildItem -Path *.nupkg | Select-Object -First 1
+          if (-not $nupkg) {
+            Write-Error "No .nupkg file found in the postman directory"
+            exit 1
+          }
           choco push $nupkg.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY
 
       - name: Commit and push changes
