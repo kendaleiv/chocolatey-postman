@@ -1,13 +1,13 @@
 ﻿$packageName= 'postman'
 $toolsDir   = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
-$url64      = 'https://dl.pstmn.io/download/version/12.30.6/win64'
+$url64      = 'https://dl.pstmn.io/download/version/12.31.0/win64'
 
 $packageArgs = @{
   packageName   = $packageName
   fileType      = 'exe'
   silentArgs    = "-s"
   url64bit      = $url64
-  checksum64    = '11b5243f7b898667ec01757cdbd46eb08181080f1aa0f183e2ebe5bc77597b17'
+  checksum64    = '6f492f1bcca8e60bc9ef7c0a79a8e976008ed00dc23bf0b2cf5c7078011c6afe'
   checksumType64= 'sha256'
 }
 
