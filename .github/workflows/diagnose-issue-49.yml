@@ -1,0 +1,151 @@
+name: Diagnose issue 49 (unchanged installers)
+
+on:
+  push:
+    branches:
+      - diagnose-issue-49-*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [repository-current, repository-reported, community-current]
+        trial: [1, 2]
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.package == 'repository-reported' && '60e121765a1e2c20c5a9014dff7f93c50ae3de42' || github.sha }}
+
+      - name: Install unchanged package and observe completion
+        env:
+          PACKAGE_SOURCE: ${{ matrix.package }}
+          TRIAL: ${{ matrix.trial }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'issue-49'
+          New-Item -ItemType Directory -Path $diagnostics | Out-Null
+          $appRoot = Join-Path $env:LOCALAPPDATA 'Postman'
+          $profileRoot = Join-Path $env:APPDATA 'Postman'
+          $installedBefore = @(choco list --limit-output)
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate installed Chocolatey packages.' }
+          if (($installedBefore -match '^postman\|') -or (Test-Path $appRoot) -or (Test-Path $profileRoot)) {
+            throw 'Runner is not a clean Postman installation environment.'
+          }
+
+          $arguments = 'install postman -y --no-progress --debug --verbose --execution-timeout=300'
+          if ($env:PACKAGE_SOURCE -ne 'community-current') {
+            Push-Location postman
+            try {
+              choco pack postman.nuspec
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot build the unchanged package.' }
+              $arguments += " --source=`"$PWD`""
+              Copy-Item tools/chocolateyInstall.ps1 $diagnostics
+              Copy-Item postman.nuspec $diagnostics
+            } finally {
+              Pop-Location
+            }
+          } else {
+            $arguments += ' --source=https://community.chocolatey.org/api/v2/'
+          }
+
+          $knownIds = @{}
+          function Save-Processes {
+            $processes = @(Get-CimInstance Win32_Process)
+            do {
+              $added = $false
+              foreach ($item in $processes) {
+                if ($knownIds.ContainsKey([int]$item.ParentProcessId) -and -not $knownIds.ContainsKey([int]$item.ProcessId)) {
+                  $knownIds[[int]$item.ProcessId] = $true
+                  $added = $true
+                }
+              }
+            } while ($added)
+            $windows = @{}
+            Get-Process | ForEach-Object { $windows[$_.Id] = $_.MainWindowTitle }
+            $selected = @($processes | Where-Object {
+              $knownIds.ContainsKey([int]$_.ProcessId) -or $_.Name -match '^(Postman|Update|Postman.*Setup)\.exe$'
+            } | Select-Object Name, ProcessId, ParentProcessId, SessionId, ExecutablePath, CommandLine,
+              @{Name='WindowTitle'; Expression={ $windows[[int]$_.ProcessId] }})
+            @{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); processes = $selected } |
+              ConvertTo-Json -Depth 5 -Compress |
+              Add-Content (Join-Path $diagnostics 'processes.jsonl')
+          }
+
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $process = Start-Process -FilePath (Get-Command choco.exe).Source -ArgumentList $arguments -PassThru `
+            -RedirectStandardOutput (Join-Path $diagnostics 'stdout.log') `
+            -RedirectStandardError (Join-Path $diagnostics 'stderr.log')
+          $process.Handle | Out-Null
+          $knownIds[$process.Id] = $true
+          do {
+            Save-Processes
+            if ($process.WaitForExit(5000)) { break }
+          } while ($clock.Elapsed.TotalSeconds -lt 420)
+          $process.Refresh()
+          $timedOut = -not $process.HasExited
+          $exitCode = if ($timedOut) { $null } else { $process.ExitCode }
+          $elapsed = $clock.Elapsed.TotalSeconds
+          Start-Sleep -Seconds 15
+          Save-Processes
+
+          $executables = if (Test-Path $appRoot) {
+            @(Get-ChildItem -LiteralPath $appRoot -Filter Postman.exe -File -Recurse |
+              Select-Object -ExpandProperty FullName)
+          } else { @() }
+          $result = [ordered]@{
+            packageSource = $env:PACKAGE_SOURCE
+            trial = $env:TRIAL
+            sourceCommit = (git rev-parse HEAD)
+            chocolateyVersion = (choco --version)
+            arguments = $arguments
+            elapsedSeconds = [Math]::Round($elapsed, 2)
+            timedOut = $timedOut
+            exitCode = $exitCode
+            installedExecutables = @($executables)
+            runnerSession = [Diagnostics.Process]::GetCurrentProcess().SessionId
+          }
+          $result | ConvertTo-Json -Depth 5 | Tee-Object -FilePath (Join-Path $diagnostics 'result.json')
+          "### $($env:PACKAGE_SOURCE), trial $($env:TRIAL)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "Timed out: $timedOut; exit code: $exitCode; elapsed: $([Math]::Round($elapsed, 2)) seconds." |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
+          $logPaths = @(
+            "$env:ChocolateyInstall\logs\chocolatey.log",
+            "$env:LOCALAPPDATA\SquirrelTemp\SquirrelSetup.log",
+            "$appRoot\SquirrelSetup.log",
+            "$appRoot\Update.log",
+            "$env:TEMP\velopack.log"
+          )
+          for ($index = 0; $index -lt $logPaths.Count; $index++) {
+            if (Test-Path $logPaths[$index]) {
+              Copy-Item -LiteralPath $logPaths[$index] -Destination (Join-Path $diagnostics "$index-installer.log")
+            }
+          }
+          $installedScript = "$env:ChocolateyInstall\lib\postman\tools\chocolateyInstall.ps1"
+          if (Test-Path $installedScript) {
+            Copy-Item -LiteralPath $installedScript -Destination (Join-Path $diagnostics 'installed-chocolateyInstall.ps1')
+          }
+          Get-Content (Join-Path $diagnostics 'stdout.log') -Tail 60
+          Get-Content (Join-Path $diagnostics 'stderr.log') -Tail 30
+          if ($timedOut) { throw 'Chocolatey is still running after the diagnostic deadline; inspect the process timeline and logs.' }
+          if ($exitCode -ne 0) { throw "Chocolatey failed with exit code $exitCode; this alone does not establish the reported login hang." }
+          if (@($executables).Count -eq 0) { throw 'Chocolatey returned success, but no installed Postman executable was found.' }
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-49-${{ matrix.package }}-${{ matrix.trial }}
+          path: ${{ runner.temp }}/issue-49
+          if-no-files-found: error
+          retention-days: 7
